@@ -58,10 +58,9 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
         .subscribe(&[&ctx.topic])
         .expect("Couldn't subscribe to \"oprish\" topic");
 
-    let socket = accept_async(stream).await.expect(&format!(
-        "Couldn't establish websocket connection with {}",
-        addr
-    ));
+    let socket = accept_async(stream)
+        .await
+        .unwrap_or_else(|_| panic!("Couldn't establish websocket connection with {}", addr));
 
     let (tx, mut rx) = socket.split();
     let tx = Arc::new(Mutex::new(tx));
@@ -101,7 +100,7 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
                 if let Ok(msg) = msg {
                     match deserialize_message(msg) {
                         Ok(msg) => {
-                            match tx
+                            if let Err(err) = tx
                                 .lock()
                                 .await
                                 .send(WebSocketMessage::Text(
@@ -110,9 +109,8 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
                                 ))
                                 .await
                             {
-                                Ok(_) => {}
-                                Err(_) => {}
-                            };
+                                log::warn!("Failed to send payload to {}: {}", addr, err);
+                            }
                         }
                         Err(err) => log::warn!("Failed to deserialize event payload: {}", err),
                     }
@@ -135,10 +133,10 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
     };
 }
 
-async fn close_socket<'t>(
+async fn close_socket(
     tx: Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, WebSocketMessage>>>,
     rx: SplitStream<WebSocketStream<TcpStream>>,
-    frame: CloseFrame<'t>,
+    frame: CloseFrame<'_>,
     addr: SocketAddr,
 ) {
     let tx = Arc::try_unwrap(tx).expect("Couldn't obtain tx from MutexLock");
@@ -150,7 +148,7 @@ async fn close_socket<'t>(
         .close(Some(frame))
         .await
     {
-        log::warn!("Couldn't close socket with {}, : {}", addr, err);
+        log::warn!("Couldn't close socket with {}: {}", addr, err);
     }
 }
 
