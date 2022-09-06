@@ -18,6 +18,8 @@ RUN cargo build --release
 
 FROM debian:buster-slim
 
+RUN apt-get update && apt-get install -y pkg-config libssl-dev
+
 COPY --from=builder /pandemonium/target/release/pandemonium /bin/pandemonium
 
 # Don't forget to also publish these ports in the docker-compose.yml file.
