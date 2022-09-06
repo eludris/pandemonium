@@ -26,8 +26,8 @@ COPY --from=builder /pandemonium/target/release/pandemonium /bin/pandemonium
 ARG PORT=8000
 
 EXPOSE $PORT
-ENV ROCKET_ADDRESS 0.0.0.0
-ENV ROCKET_PORT $PORT
+ENV GATEWAY_ADDRESS 0.0.0.0
+ENV GATEWAY_PORT $PORT
 
 ENV RUST_LOG debug
 
