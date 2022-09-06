@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev
 COPY --from=builder /pandemonium/target/release/pandemonium /bin/pandemonium
 
 # Don't forget to also publish these ports in the docker-compose.yml file.
-ARG PORT=8000
+ARG PORT=9000
 
 EXPOSE $PORT
 ENV GATEWAY_ADDRESS 0.0.0.0
