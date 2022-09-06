@@ -1,29 +1,31 @@
-FROM ekidd/rust-musl-builder:stable as builder
+FROM rust:slim-buster as builder
 
 RUN USER=root cargo new --bin pandemonium
-WORKDIR ./pandemonium
+WORKDIR /pandemonium
 
 COPY Cargo.lock Cargo.toml ./
+
+RUN apt-get update && apt-get install -y build-essential pkg-config libssl-dev
 
 RUN cargo build --release
 RUN rm src/*.rs
 
 COPY ./src ./src
 
-RUN rm ./target/x86_64-unknown-linux-musl/release/deps/pandemonium*
+RUN rm ./target/release/deps/pandemonium*
 RUN cargo build --release
 
 
-FROM alpine:latest
+FROM debian:buster-slim
 
-COPY --from=builder /home/rust/src/pandemonium/target/x86_64-unknown-linux-musl/release/pandemonium /bin/pandemonium
+COPY --from=builder /pandemonium/target/release/pandemonium /bin/pandemonium
 
 # Don't forget to also publish these ports in the docker-compose.yml file.
-ARG GATEWAY_PORT=9000
+ARG PORT=8000
 
 EXPOSE $PORT
-ENV GATEWAY_ADDRESS 0.0.0.0
-ENV GATEWAY_PORT $PORT
+ENV ROCKET_ADDRESS 0.0.0.0
+ENV ROCKET_PORT $PORT
 
 ENV RUST_LOG debug
 
