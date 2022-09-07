@@ -65,7 +65,7 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
     let (tx, mut rx) = socket.split();
     let tx = Arc::new(Mutex::new(tx));
 
-    let last_ping = Arc::new(Mutex::new(Instant::now()));
+    let last_ping = Arc::new(Mutex::new(Instant::now() - PING_RATELIMIT_RESET));
 
     let handle_rx = async {
         while let Some(msg) = rx.next().await {
