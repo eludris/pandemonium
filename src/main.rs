@@ -1,3 +1,6 @@
+mod ratelimit;
+
+use deadpool_redis::{Config, Connection, Runtime};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use rdkafka::consumer::{Consumer, StreamConsumer};
@@ -20,6 +23,8 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message as WebSocketMessage;
 use tokio_tungstenite::{accept_async, WebSocketStream};
 
+use crate::ratelimit::Ratelimiter;
+
 /// A simple struct that stores data about a Pandemonium instance.
 #[derive(Debug, Clone)]
 struct Context {
@@ -32,7 +37,8 @@ struct Context {
 const TIMEOUT_DURATION: Duration = Duration::from_secs(20);
 
 /// The minimum duration of time which can get a client disconnected for spamming gateway pings.
-const PING_RATELIMIT_RESET: Duration = Duration::from_secs(2);
+const RATELIMIT_RESET: Duration = Duration::from_secs(10);
+const RATELIMIT_PAYLOAD_LIMIT: u32 = 5;
 
 /// A simple function that check's if a client's last ping was over TIMEOUT_DURATION seconds ago and
 /// closes the gateway connection if so.
@@ -47,7 +53,7 @@ async fn check_connection(last_ping: Arc<Mutex<Instant>>) {
 }
 
 /// A function that handles one client connecting and disconnecting.
-async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
+async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, cache: Connection) {
     let consumer: StreamConsumer = ClientConfig::new()
         .set("group.id", &format!("pandemonium:{}", addr))
         .set("bootstrap.servers", &ctx.brokers)
@@ -65,20 +71,22 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
     let (tx, mut rx) = socket.split();
     let tx = Arc::new(Mutex::new(tx));
 
-    let last_ping = Arc::new(Mutex::new(Instant::now() - PING_RATELIMIT_RESET));
+    let last_ping = Arc::new(Mutex::new(Instant::now()));
 
     let handle_rx = async {
+        let mut ratelimiter =
+            Ratelimiter::new(cache, addr, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
         while let Some(msg) = rx.next().await {
             log::debug!("New gateway message:\n{:#?}", msg);
+            if ratelimiter.process_ratelimit().await.is_err() {
+                ratelimiter.clear_bucket().await;
+                log::info!("Disconnected a client: {}, reason: Hit ratelimit", addr);
+                break;
+            }
             match msg {
                 Ok(data) => match data {
                     WebSocketMessage::Ping(x) => {
                         let mut last_ping = last_ping.lock().await;
-                        if Instant::now().duration_since(*last_ping) < PING_RATELIMIT_RESET {
-                            // A simple form of gateway ratelimiting.
-                            log::info!("Disconnected a client: {}, reason: Ping ratelimit", addr);
-                            break;
-                        }
                         *last_ping = Instant::now();
                         tx.lock()
                             .await
@@ -125,7 +133,7 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr) {
             close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client timed out.") }, addr).await
         }
         _ = handle_rx => {
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Server Error.") }, addr).await;
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client got ratelimited.") }, addr).await;
         },
         _ = handle_events => {
             close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Server Error.") }, addr).await;
@@ -175,8 +183,9 @@ fn deserialize_message(message: BorrowedMessage) -> Result<Message, Box<dyn Erro
 async fn main() {
     env_logger::init();
 
-    let brokers = env::var("BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
+    let brokers = env::var("BROKERS").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
     let topic = env::var("TOPIC").unwrap_or_else(|_| "oprish".to_string());
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1".to_string());
     let gateway_address = format!(
         "{}:{}",
         env::var("GATEWAY_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
@@ -184,6 +193,11 @@ async fn main() {
     );
 
     let ctx = Context { brokers, topic };
+
+    let cfg = Config::from_url(redis_url);
+    let pool = cfg
+        .create_pool(Some(Runtime::Tokio1))
+        .expect("Couldn't connect to Cache");
 
     let socket = TcpListener::bind(&gateway_address)
         .await
@@ -193,6 +207,13 @@ async fn main() {
 
     while let Ok((stream, addr)) = socket.accept().await {
         log::info!("New connection on ip {}", addr);
-        task::spawn(handle_connection(ctx.clone(), stream, addr));
+        task::spawn(handle_connection(
+            ctx.clone(),
+            stream,
+            addr,
+            pool.get()
+                .await
+                .expect("Couldn't spawn a connection from the Cache pool"),
+        ));
     }
 }
