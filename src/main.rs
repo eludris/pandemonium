@@ -11,6 +11,7 @@ use std::env;
 use std::error::Error;
 use std::fmt::Display;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use todel::models::Message;
@@ -18,10 +19,11 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::{interval, Instant};
+use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message as WebSocketMessage;
-use tokio_tungstenite::{accept_async, WebSocketStream};
+use tokio_tungstenite::{accept_hdr_async, WebSocketStream};
 
 use crate::ratelimit::Ratelimiter;
 
@@ -64,9 +66,21 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, ca
         .subscribe(&[&ctx.topic])
         .expect("Couldn't subscribe to \"oprish\" topic");
 
-    let socket = accept_async(stream)
-        .await
-        .unwrap_or_else(|_| panic!("Couldn't establish websocket connection with {}", addr));
+    let mut addr = addr;
+
+    let socket = accept_hdr_async(stream, |req: &Request, resp: Response| {
+        let headers = req.headers();
+
+        if let Some(ip) = headers.get("X-Real-Ip") {
+            addr = SocketAddr::from_str(ip.to_str().unwrap()).unwrap();
+        } else if let Some(ip) = headers.get("CF-Connecting-IP") {
+            addr = SocketAddr::from_str(ip.to_str().unwrap()).unwrap()
+        }
+
+        Ok(resp)
+    })
+    .await
+    .unwrap_or_else(|_| panic!("Couldn't establish websocket connection with {}", addr));
 
     let (tx, mut rx) = socket.split();
     let tx = Arc::new(Mutex::new(tx));
@@ -189,7 +203,7 @@ async fn main() {
     let gateway_address = format!(
         "{}:{}",
         env::var("GATEWAY_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
-        env::var("GATEWAY_PORT").unwrap_or_else(|_| "9000".to_string())
+        env::var("GATEWAY_PORT").unwrap_or_else(|_| "7160".to_string())
     );
 
     let ctx = Context { brokers, topic };
