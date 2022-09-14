@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::env;
 use std::error::Error;
 use std::fmt::Display;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,21 +66,26 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, ca
         .subscribe(&[&ctx.topic])
         .expect("Couldn't subscribe to \"oprish\" topic");
 
-    let mut addr = addr;
+    let mut rl_address = IpAddr::from_str("127.0.0.1").unwrap();
 
     let socket = accept_hdr_async(stream, |req: &Request, resp: Response| {
         let headers = req.headers();
 
         if let Some(ip) = headers.get("X-Real-Ip") {
-            addr = SocketAddr::from_str(ip.to_str().unwrap()).unwrap();
+            rl_address = IpAddr::from_str(ip.to_str().unwrap()).unwrap();
         } else if let Some(ip) = headers.get("CF-Connecting-IP") {
-            addr = SocketAddr::from_str(ip.to_str().unwrap()).unwrap()
+            rl_address = IpAddr::from_str(ip.to_str().unwrap()).unwrap();
         }
 
         Ok(resp)
     })
     .await
-    .unwrap_or_else(|_| panic!("Couldn't establish websocket connection with {}", addr));
+    .unwrap_or_else(|_| {
+        panic!(
+            "Couldn't establish websocket connection with {}",
+            rl_address
+        )
+    });
 
     let (tx, mut rx) = socket.split();
     let tx = Arc::new(Mutex::new(tx));
@@ -89,12 +94,15 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, ca
 
     let handle_rx = async {
         let mut ratelimiter =
-            Ratelimiter::new(cache, addr, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
+            Ratelimiter::new(cache, rl_address, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
         while let Some(msg) = rx.next().await {
             log::debug!("New gateway message:\n{:#?}", msg);
             if ratelimiter.process_ratelimit().await.is_err() {
                 ratelimiter.clear_bucket().await;
-                log::info!("Disconnected a client: {}, reason: Hit ratelimit", addr);
+                log::info!(
+                    "Disconnected a client: {}, reason: Hit ratelimit",
+                    rl_address
+                );
                 break;
             }
             match msg {
@@ -131,7 +139,7 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, ca
                                 ))
                                 .await
                             {
-                                log::warn!("Failed to send payload to {}: {}", addr, err);
+                                log::warn!("Failed to send payload to {}: {}", rl_address, err);
                             }
                         }
                         Err(err) => log::warn!("Failed to deserialize event payload: {}", err),
@@ -143,14 +151,14 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, ca
 
     tokio::select! {
         _ = check_connection(last_ping.clone()) => {
-            log::info!("Dead connection with client {}", addr);
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client timed out.") }, addr).await
+            log::info!("Dead connection with client {}", rl_address);
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client timed out.") }, rl_address).await
         }
         _ = handle_rx => {
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client got ratelimited.") }, addr).await;
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client got ratelimited.") }, rl_address).await;
         },
         _ = handle_events => {
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Server Error.") }, addr).await;
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Server Error.") }, rl_address).await;
         },
     };
 }
@@ -159,7 +167,7 @@ async fn close_socket(
     tx: Arc<Mutex<SplitSink<WebSocketStream<TcpStream>, WebSocketMessage>>>,
     rx: SplitStream<WebSocketStream<TcpStream>>,
     frame: CloseFrame<'_>,
-    addr: SocketAddr,
+    rl_address: IpAddr,
 ) {
     let tx = Arc::try_unwrap(tx).expect("Couldn't obtain tx from MutexLock");
     let tx = tx.into_inner();
@@ -170,7 +178,7 @@ async fn close_socket(
         .close(Some(frame))
         .await
     {
-        log::warn!("Couldn't close socket with {}: {}", addr, err);
+        log::warn!("Couldn't close socket with {}: {}", rl_address, err);
     }
 }
 
