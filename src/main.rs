@@ -75,6 +75,8 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, ca
             rl_address = IpAddr::from_str(ip.to_str().unwrap()).unwrap();
         } else if let Some(ip) = headers.get("CF-Connecting-IP") {
             rl_address = IpAddr::from_str(ip.to_str().unwrap()).unwrap();
+        } else {
+            rl_address = addr.ip();
         }
 
         Ok(resp)
