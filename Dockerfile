@@ -3,9 +3,13 @@ FROM rust:slim-buster as builder
 RUN USER=root cargo new --bin pandemonium
 WORKDIR /pandemonium
 
-COPY Cargo.lock Cargo.toml ./
+RUN apt-get update && apt-get install -y \
+  build-essential \
+  libssl-dev \
+  pkg-config \
+  && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y build-essential pkg-config libssl-dev
+COPY Cargo.lock Cargo.toml ./
 
 RUN cargo build --release
 RUN rm src/*.rs
