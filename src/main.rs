@@ -1,11 +1,10 @@
 mod ratelimit;
 
+use deadpool_redis::redis::aio::PubSub;
+use deadpool_redis::redis::Msg;
 use deadpool_redis::{Config, Connection, Runtime};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
-use rdkafka::consumer::{Consumer, StreamConsumer};
-use rdkafka::message::BorrowedMessage;
-use rdkafka::{ClientConfig, Message as KafkaMessage};
 use std::borrow::Cow;
 use std::env;
 use std::error::Error;
@@ -26,13 +25,6 @@ use tokio_tungstenite::tungstenite::Message as WebSocketMessage;
 use tokio_tungstenite::{accept_hdr_async, WebSocketStream};
 
 use crate::ratelimit::Ratelimiter;
-
-/// A simple struct that stores data about a Pandemonium instance.
-#[derive(Debug, Clone)]
-struct Context {
-    brokers: String,
-    topic: String,
-}
 
 /// The duration it takes for a connection to be inactive in for it to be regarded as zombified and
 /// disconnected.
@@ -55,17 +47,7 @@ async fn check_connection(last_ping: Arc<Mutex<Instant>>) {
 }
 
 /// A function that handles one client connecting and disconnecting.
-async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, cache: Connection) {
-    let consumer: StreamConsumer = ClientConfig::new()
-        .set("group.id", &format!("pandemonium:{}", addr))
-        .set("bootstrap.servers", &ctx.brokers)
-        .create()
-        .unwrap();
-
-    consumer
-        .subscribe(&[&ctx.topic])
-        .expect("Couldn't subscribe to \"oprish\" topic");
-
+async fn handle_connection(stream: TcpStream, addr: SocketAddr, cache: Connection, pubsub: PubSub) {
     let mut rl_address = IpAddr::from_str("127.0.0.1").unwrap();
 
     let socket = accept_hdr_async(stream, |req: &Request, resp: Response| {
@@ -126,26 +108,23 @@ async fn handle_connection(ctx: Context, stream: TcpStream, addr: SocketAddr, ca
     };
 
     let handle_events = async {
-        consumer
-            .stream()
+        pubsub
+            .into_on_message()
             .for_each(|msg| async {
-                if let Ok(msg) = msg {
-                    match deserialize_message(msg) {
-                        Ok(msg) => {
-                            if let Err(err) = tx
-                                .lock()
-                                .await
-                                .send(WebSocketMessage::Text(
-                                    serde_json::to_string(&msg)
-                                        .expect("Couldn't serialize payload"),
-                                ))
-                                .await
-                            {
-                                log::warn!("Failed to send payload to {}: {}", rl_address, err);
-                            }
+                match deserialize_message(msg) {
+                    Ok(msg) => {
+                        if let Err(err) = tx
+                            .lock()
+                            .await
+                            .send(WebSocketMessage::Text(
+                                serde_json::to_string(&msg).expect("Couldn't serialize payload"),
+                            ))
+                            .await
+                        {
+                            log::warn!("Failed to send payload to {}: {}", rl_address, err);
                         }
-                        Err(err) => log::warn!("Failed to deserialize event payload: {}", err),
                     }
+                    Err(err) => log::warn!("Failed to deserialize event payload: {}", err),
                 }
             })
             .await;
@@ -197,26 +176,24 @@ impl Display for PayloadNotFound {
 impl Error for PayloadNotFound {}
 
 /// A function that simplifies deserializing a message Payload.
-fn deserialize_message(message: BorrowedMessage) -> Result<Message, Box<dyn Error + Send + Sync>> {
-    Ok(serde_json::from_str::<Message>(&String::from_utf8(
-        message.payload().ok_or(PayloadNotFound {})?.to_vec(),
-    )?)?)
+fn deserialize_message(message: Msg) -> Result<Message, Box<dyn Error + Send + Sync>> {
+    Ok(serde_json::from_str::<Message>(
+        &message
+            .get_payload::<String>()
+            .map_err(|_| PayloadNotFound {})?,
+    )?)
 }
 
 #[tokio::main]
 async fn main() {
     env_logger::init();
 
-    let brokers = env::var("BROKERS").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
-    let topic = env::var("TOPIC").unwrap_or_else(|_| "oprish".to_string());
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1".to_string());
     let gateway_address = format!(
         "{}:{}",
         env::var("GATEWAY_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
         env::var("GATEWAY_PORT").unwrap_or_else(|_| "7160".to_string())
     );
-
-    let ctx = Context { brokers, topic };
 
     let cfg = Config::from_url(redis_url);
     let pool = cfg
@@ -231,13 +208,25 @@ async fn main() {
 
     while let Ok((stream, addr)) = socket.accept().await {
         log::info!("New connection on ip {}", addr);
-        task::spawn(handle_connection(
-            ctx.clone(),
-            stream,
-            addr,
-            pool.get()
-                .await
-                .expect("Couldn't spawn a connection from the Cache pool"),
-        ));
+        let pubsub = match pool.get().await {
+            Ok(pool) => pool,
+            Err(err) => {
+                log::warn!("Couldn't generate a new connection: {:?}", err);
+                continue;
+            }
+        };
+        let mut pubsub = Connection::take(pubsub).into_pubsub();
+        if let Err(err) = pubsub.subscribe("oprish-events").await {
+            log::warn!("Couldn't subscribe to oprish-events: {:?}", err);
+            continue;
+        }
+        let cache = match pool.get().await {
+            Ok(pool) => pool,
+            Err(err) => {
+                log::warn!("Couldn't generate a new connection: {:?}", err);
+                continue;
+            }
+        };
+        task::spawn(handle_connection(stream, addr, cache, pubsub));
     }
 }
