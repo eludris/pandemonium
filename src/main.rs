@@ -79,10 +79,16 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, cache: Connectio
     let handle_rx = async {
         let mut ratelimiter =
             Ratelimiter::new(cache, rl_address, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
+        if let Err(()) = ratelimiter.process_ratelimit().await {
+            log::info!(
+                "Disconnected a client: {}, reason: Hit ratelimit",
+                rl_address
+            );
+            return;
+        }
         while let Some(msg) = rx.next().await {
             log::debug!("New gateway message:\n{:#?}", msg);
-            if ratelimiter.process_ratelimit().await.is_err() {
-                ratelimiter.clear_bucket().await;
+            if let Err(()) = ratelimiter.process_ratelimit().await {
                 log::info!(
                     "Disconnected a client: {}, reason: Hit ratelimit",
                     rl_address

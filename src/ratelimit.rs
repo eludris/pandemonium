@@ -90,9 +90,4 @@ impl Ratelimiter {
             Ok(())
         }
     }
-
-    /// Deletes the key of a bucket from the Cache.
-    pub async fn clear_bucket(mut self) {
-        self.cache.del(self.key).await.unwrap()
-    }
 }
