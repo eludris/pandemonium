@@ -49,6 +49,15 @@ async fn check_connection(last_ping: Arc<Mutex<Instant>>) {
 /// A function that handles one client connecting and disconnecting.
 async fn handle_connection(stream: TcpStream, addr: SocketAddr, cache: Connection, pubsub: PubSub) {
     let mut rl_address = IpAddr::from_str("127.0.0.1").unwrap();
+    let mut ratelimiter =
+        Ratelimiter::new(cache, rl_address, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
+    if let Err(()) = ratelimiter.process_ratelimit().await {
+        log::info!(
+            "Disconnected a client: {}, reason: Hit ratelimit",
+            rl_address
+        );
+        return;
+    }
 
     let socket = accept_hdr_async(stream, |req: &Request, resp: Response| {
         let headers = req.headers();
@@ -77,15 +86,6 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, cache: Connectio
     let last_ping = Arc::new(Mutex::new(Instant::now()));
 
     let handle_rx = async {
-        let mut ratelimiter =
-            Ratelimiter::new(cache, rl_address, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
-        if let Err(()) = ratelimiter.process_ratelimit().await {
-            log::info!(
-                "Disconnected a client: {}, reason: Hit ratelimit",
-                rl_address
-            );
-            return;
-        }
         while let Some(msg) = rx.next().await {
             log::debug!("New gateway message:\n{:#?}", msg);
             if let Err(()) = ratelimiter.process_ratelimit().await {
