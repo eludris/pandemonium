@@ -28,7 +28,7 @@ use crate::ratelimit::Ratelimiter;
 
 /// The duration it takes for a connection to be inactive in for it to be regarded as zombified and
 /// disconnected.
-const TIMEOUT_DURATION: Duration = Duration::from_secs(20);
+const TIMEOUT_DURATION: Duration = Duration::from_secs(46);
 
 /// The minimum duration of time which can get a client disconnected for spamming gateway pings.
 const RATELIMIT_RESET: Duration = Duration::from_secs(10);
