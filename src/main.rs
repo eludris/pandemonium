@@ -133,13 +133,13 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, cache: Connectio
     tokio::select! {
         _ = check_connection(last_ping.clone()) => {
             log::info!("Dead connection with client {}", rl_address);
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client timed out.") }, rl_address).await
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client timed out") }, rl_address).await
         }
         _ = handle_rx => {
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client got ratelimited.") }, rl_address).await;
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client got ratelimited") }, rl_address).await;
         },
         _ = handle_events => {
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Server Error.") }, rl_address).await;
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Server Error") }, rl_address).await;
         },
     };
 }
