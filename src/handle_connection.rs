@@ -7,6 +7,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use todel::models::Payload;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::time::{interval, Instant};
@@ -79,7 +80,7 @@ pub async fn handle_connection(
         let mut ratelimiter =
             Ratelimiter::new(cache, rl_address, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
         while let Some(msg) = rx.next().await {
-            log::debug!("New gateway message:\n{:#?}", msg);
+            log::trace!("New gateway message:\n{:#?}", msg);
             if ratelimiter.process_ratelimit().await.is_err() {
                 ratelimiter.clear_bucket().await;
                 log::info!(
@@ -90,14 +91,21 @@ pub async fn handle_connection(
             }
             match msg {
                 Ok(data) => match data {
-                    WebSocketMessage::Ping(x) => {
-                        let mut last_ping = last_ping.lock().await;
-                        *last_ping = Instant::now();
-                        tx.lock()
-                            .await
-                            .send(WebSocketMessage::Pong(x))
-                            .await
-                            .expect("Couldn't send pong");
+                    WebSocketMessage::Text(message) => {
+                        match serde_json::from_str::<Payload>(&message) {
+                            Ok(Payload::Ping) => {
+                                let mut last_ping = last_ping.lock().await;
+                                *last_ping = Instant::now();
+                                tx.lock()
+                                    .await
+                                    .send(WebSocketMessage::Text(
+                                        serde_json::to_string(&Payload::Pong).unwrap(),
+                                    ))
+                                    .await
+                                    .expect("Couldn't send pong");
+                            }
+                            _ => log::debug!("Unknown gateway payload: {}", message),
+                        }
                     }
                     _ => log::debug!("Unsupported Gateway message type."),
                 },
