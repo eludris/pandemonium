@@ -1,6 +1,6 @@
 use deadpool_redis::redis::Msg;
 use std::{error::Error, fmt::Display};
-use todel::models::Message;
+use todel::models::Payload;
 
 /// An Error that represents a Payload not being found.
 #[derive(Debug)]
@@ -15,9 +15,9 @@ impl Display for PayloadNotFound {
 impl Error for PayloadNotFound {}
 
 /// A function that simplifies deserializing a message Payload.
-pub fn deserialize_message(message: Msg) -> Result<Message, Box<dyn Error + Send + Sync>> {
-    Ok(serde_json::from_str::<Message>(
-        &message
+pub fn deserialize_message(payload: Msg) -> Result<Payload, Box<dyn Error + Send + Sync>> {
+    Ok(serde_json::from_str::<Payload>(
+        &payload
             .get_payload::<String>()
             .map_err(|_| PayloadNotFound {})?,
     )?)
