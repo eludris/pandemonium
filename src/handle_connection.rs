@@ -140,7 +140,7 @@ pub async fn handle_connection(
     tokio::select! {
         _ = check_connection(last_ping.clone()) => {
             log::info!("Dead connection with client {}", rl_address);
-            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client connection ping timed out out") }, rl_address).await
+            close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client ping timed out") }, rl_address).await
         }
         _ = handle_rx => {
             close_socket(tx, rx, CloseFrame { code: CloseCode::Error, reason: Cow::Borrowed("Client got ratelimited") }, rl_address).await;
@@ -166,6 +166,6 @@ async fn close_socket(
         .close(Some(frame))
         .await
     {
-        log::warn!("Couldn't close socket with {}: {}", rl_address, err);
+        log::debug!("Couldn't close socket with {}: {}", rl_address, err);
     }
 }
