@@ -9,6 +9,7 @@ use tokio::{net::TcpListener, task};
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
     env_logger::init();
 
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1".to_string());
