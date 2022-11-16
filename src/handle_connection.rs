@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use todel::models::Payload;
+use todel::Conf;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::time::{interval, Instant};
@@ -24,11 +25,6 @@ use crate::utils::deserialize_message;
 /// disconnected.
 const TIMEOUT_DURATION: Duration = Duration::from_secs(46); // 45 seconds + some time to account
                                                             // for jitter
-
-/// The minimum duration of time which can get a client disconnected for spamming gateway pings.
-const RATELIMIT_RESET: Duration = Duration::from_secs(10);
-const RATELIMIT_PAYLOAD_LIMIT: u32 = 5;
-
 /// A simple function that check's if a client's last ping was over TIMEOUT_DURATION seconds ago and
 /// closes the gateway connection if so.
 async fn check_connection(last_ping: Arc<Mutex<Instant>>) {
@@ -47,6 +43,7 @@ pub async fn handle_connection(
     addr: SocketAddr,
     cache: Connection,
     pubsub: PubSub,
+    conf: Arc<Conf>,
 ) {
     let mut rl_address = IpAddr::from_str("127.0.0.1").unwrap();
 
@@ -77,8 +74,12 @@ pub async fn handle_connection(
     let last_ping = Arc::new(Mutex::new(Instant::now()));
 
     let handle_rx = async {
-        let mut ratelimiter =
-            Ratelimiter::new(cache, rl_address, RATELIMIT_RESET, RATELIMIT_PAYLOAD_LIMIT);
+        let mut ratelimiter = Ratelimiter::new(
+            cache,
+            rl_address,
+            Duration::from_secs(conf.pandemonium.ratelimit.reset_after as u64),
+            conf.pandemonium.ratelimit.limit,
+        );
         while let Some(msg) = rx.next().await {
             log::trace!("New gateway message:\n{:#?}", msg);
             if ratelimiter.process_ratelimit().await.is_err() {

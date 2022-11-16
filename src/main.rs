@@ -3,7 +3,8 @@ mod ratelimit;
 mod utils;
 
 use deadpool_redis::{Config, Connection, Runtime};
-use std::env;
+use std::{env, sync::Arc};
+use todel::Conf;
 use tokio::{net::TcpListener, task};
 
 #[tokio::main]
@@ -16,6 +17,8 @@ async fn main() {
         env::var("GATEWAY_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
         env::var("GATEWAY_PORT").unwrap_or_else(|_| "7160".to_string())
     );
+
+    let conf = Arc::new(Conf::new_from_env());
 
     let cfg = Config::from_url(redis_url);
     let pool = cfg
@@ -50,7 +53,11 @@ async fn main() {
             }
         };
         task::spawn(handle_connection::handle_connection(
-            stream, addr, cache, pubsub,
+            stream,
+            addr,
+            cache,
+            pubsub,
+            Arc::clone(&conf),
         ));
     }
 }
