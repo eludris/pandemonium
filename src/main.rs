@@ -2,13 +2,14 @@ mod handle_connection;
 mod ratelimit;
 mod utils;
 
+use anyhow::Context;
 use deadpool_redis::{Config, Connection, Runtime};
 use std::{env, sync::Arc};
 use todel::Conf;
 use tokio::{net::TcpListener, task};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), anyhow::Error> {
     dotenvy::dotenv().ok();
     env_logger::init();
 
@@ -19,16 +20,16 @@ async fn main() {
         env::var("GATEWAY_PORT").unwrap_or_else(|_| "7160".to_string())
     );
 
-    let conf = Arc::new(Conf::new_from_env());
+    let conf = Arc::new(Conf::new_from_env()?);
 
-    let cfg = Config::from_url(redis_url);
+    let cfg = Config::from_url(&redis_url);
     let pool = cfg
         .create_pool(Some(Runtime::Tokio1))
-        .expect("Couldn't connect to Cache");
+        .with_context(|| format!("Couldn't connect to KeyDB on {}", redis_url))?;
 
     let socket = TcpListener::bind(&gateway_address)
         .await
-        .unwrap_or_else(|_| panic!("Couldn't start a websocket on {}", gateway_address));
+        .with_context(|| format!("Couldn't start a websocket on {}", gateway_address))?;
 
     log::info!("Gateway started at {}", gateway_address);
 
@@ -61,4 +62,6 @@ async fn main() {
             Arc::clone(&conf),
         ));
     }
+
+    Ok(())
 }

@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.66"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "216261ddc8289130e551ddcd5ce8a064710c0d064a4d2895c67151c92b5443f6"
+
+[[package]]
 name = "async-trait"
 version = "0.1.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -530,6 +536,7 @@ dependencies = [
 name = "pandemonium"
 version = "0.3.0-rc.1"
 dependencies = [
+ "anyhow",
  "deadpool-redis",
  "dotenvy",
  "env_logger",
@@ -852,8 +859,9 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 [[package]]
 name = "todel"
 version = "0.2.4"
-source = "git+https://github.com/eludris/todel#e5e973e703abd48704645ca708f57b974fb08b6e"
+source = "git+https://github.com/eludris/todel#27fb5651744f08fb7ce13796be2fed20ce2ddbae"
 dependencies = [
+ "anyhow",
  "lazy_static",
  "log",
  "serde",

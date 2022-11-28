@@ -47,13 +47,19 @@ pub async fn handle_connection(
 ) {
     let mut rl_address = IpAddr::from_str("127.0.0.1").unwrap();
 
-    let socket = accept_hdr_async(stream, |req: &Request, resp: Response| {
+    let socket = match accept_hdr_async(stream, |req: &Request, resp: Response| {
         let headers = req.headers();
 
         if let Some(ip) = headers.get("X-Real-Ip") {
-            rl_address = IpAddr::from_str(ip.to_str().unwrap()).unwrap();
+            rl_address = ip
+                .to_str()
+                .map(|ip| IpAddr::from_str(ip).unwrap_or_else(|_| addr.ip()))
+                .unwrap_or_else(|_| addr.ip());
         } else if let Some(ip) = headers.get("CF-Connecting-IP") {
-            rl_address = IpAddr::from_str(ip.to_str().unwrap()).unwrap();
+            rl_address = ip
+                .to_str()
+                .map(|ip| IpAddr::from_str(ip).unwrap_or_else(|_| addr.ip()))
+                .unwrap_or_else(|_| addr.ip());
         } else {
             rl_address = addr.ip();
         }
@@ -61,12 +67,17 @@ pub async fn handle_connection(
         Ok(resp)
     })
     .await
-    .unwrap_or_else(|_| {
-        panic!(
-            "Couldn't establish websocket connection with {}",
-            rl_address
-        )
-    });
+    {
+        Ok(socket) => socket,
+        Err(err) => {
+            log::error!(
+                "Could not establish a websocket conenction with {}: {}",
+                rl_address,
+                err
+            );
+            return;
+        }
+    };
 
     let (tx, mut rx) = socket.split();
     let tx = Arc::new(Mutex::new(tx));
@@ -97,13 +108,16 @@ pub async fn handle_connection(
                             Ok(Payload::Ping) => {
                                 let mut last_ping = last_ping.lock().await;
                                 *last_ping = Instant::now();
-                                tx.lock()
+                                let res = tx
+                                    .lock()
                                     .await
                                     .send(WebSocketMessage::Text(
                                         serde_json::to_string(&Payload::Pong).unwrap(),
                                     ))
-                                    .await
-                                    .expect("Couldn't send pong");
+                                    .await;
+                                if let Err(err) = res {
+                                    log::error!("Could not send gateway PONG frame: {}", err);
+                                }
                             }
                             _ => log::debug!("Unknown gateway payload: {}", message),
                         }

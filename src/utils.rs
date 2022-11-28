@@ -4,7 +4,7 @@ use todel::models::Payload;
 
 /// An Error that represents a Payload not being found.
 #[derive(Debug)]
-pub struct PayloadNotFound {}
+pub struct PayloadNotFound;
 
 impl Display for PayloadNotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -19,6 +19,6 @@ pub fn deserialize_message(payload: Msg) -> Result<Payload, Box<dyn Error + Send
     Ok(serde_json::from_str::<Payload>(
         &payload
             .get_payload::<String>()
-            .map_err(|_| PayloadNotFound {})?,
+            .map_err(|_| PayloadNotFound)?,
     )?)
 }
