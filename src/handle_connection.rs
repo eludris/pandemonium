@@ -94,7 +94,6 @@ pub async fn handle_connection(
         while let Some(msg) = rx.next().await {
             log::trace!("New gateway message:\n{:#?}", msg);
             if ratelimiter.process_ratelimit().await.is_err() {
-                ratelimiter.clear_bucket().await;
                 log::info!(
                     "Disconnected a client: {}, reason: Hit ratelimit",
                     rl_address
