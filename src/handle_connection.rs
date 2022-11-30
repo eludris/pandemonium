@@ -79,18 +79,26 @@ pub async fn handle_connection(
         }
     };
 
+    let mut ratelimiter = Ratelimiter::new(
+        cache,
+        rl_address,
+        Duration::from_secs(conf.pandemonium.ratelimit.reset_after as u64),
+        conf.pandemonium.ratelimit.limit,
+    );
+    if let Err(()) = ratelimiter.process_ratelimit().await {
+        log::info!(
+            "Disconnected a client: {}, reason: Hit ratelimit",
+            rl_address
+        );
+        return;
+    }
+
     let (tx, mut rx) = socket.split();
     let tx = Arc::new(Mutex::new(tx));
 
     let last_ping = Arc::new(Mutex::new(Instant::now()));
 
     let handle_rx = async {
-        let mut ratelimiter = Ratelimiter::new(
-            cache,
-            rl_address,
-            Duration::from_secs(conf.pandemonium.ratelimit.reset_after as u64),
-            conf.pandemonium.ratelimit.limit,
-        );
         while let Some(msg) = rx.next().await {
             log::trace!("New gateway message:\n{:#?}", msg);
             if ratelimiter.process_ratelimit().await.is_err() {
