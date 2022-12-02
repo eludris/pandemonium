@@ -5,6 +5,10 @@ on: [push, pull_request]
 jobs:
   format:
     name: Formatting
+
+    # Do not run on PRs from the same repo, since `push` already handles them.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name !=
+      github.repository
     runs-on: ubuntu-latest
 
     steps:
@@ -24,6 +28,9 @@ jobs:
 
   test:
     name: Tests
+
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name !=
+      github.repository
     runs-on: ubuntu-latest
 
     steps:
@@ -45,6 +52,9 @@ jobs:
 
   clippy:
     name: Clippy; Destroyer of Realities.
+
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name !=
+      github.repository
     runs-on: ubuntu-latest
 
     steps:
